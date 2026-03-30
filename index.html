@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Humanitarian Response Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; display: flex; }
+        #sidebar { width: 250px; background: #2c3e50; color: white; padding: 20px; height: 100vh; position: fixed; }
+        #main { margin-left: 290px; padding: 20px; width: calc(100% - 310px); }
+        .filter-group { margin-bottom: 20px; }
+        select { width: 100%; padding: 8px; border-radius: 4px; }
+        .kpi-container { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .kpi-card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 18%; text-align: center; }
+        .kpi-value { font-size: 1.4em; font-weight: bold; color: #2980b9; }
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tooltip { position: absolute; padding: 10px; background: rgba(0,0,0,0.8); color: white; border-radius: 4px; pointer-events: none; font-size: 12px; visibility: hidden; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
+        th { background-color: #34495e; color: white; cursor: pointer; }
+        tr:hover { background-color: #f1f1f1; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>Filters</h2>
+    <div class="filter-group">
+        <label>Country</label>
+        <select id="countryFilter"><option value="All">All Countries</option></select>
+    </div>
+    <div class="filter-group">
+        <label>Region</label>
+        <select id="regionFilter"><option value="All">All Regions</option></select>
+    </div>
+    <div class="filter-group">
+        <label>Sector</label>
+        <select id="sectorFilter"><option value="All">All Sectors</option></select>
+    </div>
+    <div class="filter-group">
+        <label>Organization</label>
+        <select id="partnerFilter"><option value="All">All Partners</option></select>
+    </div>
+</div>
+
+<div id="main">
+    <h1>Humanitarian Response Monitoring</h1>
+    
+    <div class="kpi-container">
+        <div class="kpi-card"><div>People Targeted</div><div id="kpi-target" class="kpi-value">0</div></div>
+        <div class="kpi-card"><div>People Reached</div><div id="kpi-reached" class="kpi-value">0</div></div>
+        <div class="kpi-card"><div>Funding Required</div><div id="kpi-req" class="kpi-value">$0</div></div>
+        <div class="kpi-card"><div>Funding Received</div><div id="kpi-rec" class="kpi-value">$0</div></div>
+        <div class="kpi-card"><div>Funding Gap %</div><div id="kpi-gap" class="kpi-value">0%</div></div>
+    </div>
+
+    <div class="grid-container">
+        <div class="chart-box"><h3>Target vs Reached by Sector</h3><div id="sectorChart"></div></div>
+        <div class="chart-box"><h3>Monthly Funding Received</h3><div id="timeChart"></div></div>
+        <div class="chart-box"><h3>Top 10 Locations by Gap %</h3><div id="gapChart"></div></div>
+        <div class="chart-box"><h3>Incidents by Severity</h3><div id="severityChart"></div></div>
+    </div>
+
+    <h3>Data Subset (Recent Records)</h3>
+    <table id="dataTable">
+        <thead>
+            <tr><th>Date</th><th>Country</th><th>Sector</th><th>Partner</th><th>Gap %</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+let rawData = [];
+const margin = {top: 20, right: 30, bottom: 50, left: 60},
+      width = 450 - margin.left - margin.right,
+      height = 300 - margin.top - margin.bottom;
+
+// Load Data
+d3.csv("humanitarian_response_dataset.csv").then(data => {
+    data.forEach(d => {
+        d.people_in_need = +d.people_in_need;
+        d.people_reached = +d.people_reached;
+        d.funding_required_usd = +d.funding_required_usd;
+        d.funding_received_usd = +d.funding_received_usd;
+        d.incidents_reported = +d.incidents_reported;
+        d.severity = +d.severity;
+        d.gap_pct = (1 - (d.funding_received_usd / d.funding_required_usd)) * 100;
+        d.date = new Date(d.date);
+    });
+    rawData = data;
+    populateFilters();
+    updateDashboard();
+});
+
+function populateFilters() {
+    const countries = ["All", ...new Set(rawData.map(d => d.country))];
+    const regions = ["All", ...new Set(rawData.map(d => d.state_region))];
+    const sectors = ["All", ...new Set(rawData.map(d => d.sector))];
+    const partners = ["All", ...new Set(rawData.map(d => d.partner))];
+
+    d3.select("#countryFilter").selectAll("option").data(countries).enter().append("option").text(d => d).attr("value", d => d);
+    d3.select("#regionFilter").selectAll("option").data(regions).enter().append("option").text(d => d).attr("value", d => d);
+    d3.select("#sectorFilter").selectAll("option").data(sectors).enter().append("option").text(d => d).attr("value", d => d);
+    d3.select("#partnerFilter").selectAll("option").data(partners).enter().append("option").text(d => d).attr("value", d => d);
+
+    d3.selectAll("select").on("change", updateDashboard);
+}
+
+function updateDashboard() {
+    const country = d3.select("#countryFilter").property("value");
+    const region = d3.select("#regionFilter").property("value");
+    const sector = d3.select("#sectorFilter").property("value");
+    const partner = d3.select("#partnerFilter").property("value");
+
+    const filtered = rawData.filter(d => 
+        (country === "All" || d.country === country) &&
+        (region === "All" || d.state_region === region) &&
+        (sector === "All" || d.sector === sector) &&
+        (partner === "All" || d.partner === partner)
+    );
+
+    updateKPIs(filtered);
+    drawSectorChart(filtered);
+    drawTimeChart(filtered);
+    drawGapChart(filtered);
+    drawSeverityChart(filtered);
+    updateTable(filtered);
+}
+
+function updateKPIs(data) {
+    const targeted = d3.sum(data, d => d.people_in_need);
+    const reached = d3.sum(data, d => d.people_reached);
+    const req = d3.sum(data, d => d.funding_required_usd);
+    const rec = d3.sum(data, d => d.funding_received_usd);
+    const gap = req > 0 ? (1 - (rec / req)) * 100 : 0;
+
+    d3.select("#kpi-target").text(targeted.toLocaleString());
+    d3.select("#kpi-reached").text(reached.toLocaleString());
+    d3.select("#kpi-req").text("$" + d3.format(",.2f")(req));
+    d3.select("#kpi-rec").text("$" + d3.format(",.2f")(rec));
+    d3.select("#kpi-gap").text(gap.toFixed(2) + "%");
+}
+
+function drawSectorChart(data) {
+    d3.select("#sectorChart").selectAll("*").remove();
+    const nested = d3.rollups(data, v => ({
+        target: d3.sum(v, d => d.people_in_need),
+        reached: d3.sum(v, d => d.people_reached)
+    }), d => d.sector);
+
+    const svg = d3.select("#sectorChart").append("svg").attr("width", width + margin.left + margin.right).attr("height", height + margin.top + margin.bottom).append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    
+    const x0 = d3.scaleBand().range([0, width]).domain(nested.map(d => d[0])).padding(0.2);
+    const x1 = d3.scaleBand().domain(['target', 'reached']).rangeRound([0, x0.bandwidth()]).padding(0.05);
+    const y = d3.scaleLinear().range([height, 0]).domain([0, d3.max(nested, d => Math.max(d[1].target, d[1].reached))]);
+
+    svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x0)).selectAll("text").style("text-anchor", "end").attr("dx", "-.8em").attr("dy", ".15em").attr("transform", "rotate(-45)");
+    svg.append("g").call(d3.axisLeft(y));
+
+    const sectorGroups = svg.selectAll(".sector").data(nested).enter().append("g").attr("transform", d => `translate(${x0(d[0])},0)`);
+
+    sectorGroups.selectAll("rect").data(d => [{key: 'target', val: d[1].target}, {key: 'reached', val: d[1].reached}])
+        .enter().append("rect")
+        .attr("x", d => x1(d.key))
+        .attr("y", d => y(d.val))
+        .attr("width", x1.bandwidth())
+        .attr("height", d => height - y(d.val))
+        .attr("fill", d => d.key === 'target' ? "#3498db" : "#2ecc71")
+        .on("mouseover", (e, d) => {
+            d3.select("#tooltip").style("visibility", "visible").html(`${d.key.toUpperCase()}: ${d.val.toLocaleString()}`);
+            d3.select(e.currentTarget).attr("opacity", 0.7);
+        })
+        .on("mousemove", e => d3.select("#tooltip").style("top", (e.pageY-10)+"px").style("left",(e.pageX+10)+"px"))
+        .on("mouseout", (e) => {
+            d3.select("#tooltip").style("visibility", "hidden");
+            d3.select(e.currentTarget).attr("opacity", 1);
+        });
+}
+
+function drawTimeChart(data) {
+    d3.select("#timeChart").selectAll("*").remove();
+    const timeData = d3.rollups(data, v => d3.sum(v, d => d.funding_received_usd), d => d3.timeMonth(d.date))
+                       .sort((a,b) => a[0] - b[0]);
+
+    const svg = d3.select("#timeChart").append("svg").attr("width", width + margin.left + margin.right).attr("height", height + margin.top + margin.bottom).append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    const x = d3.scaleTime().range([0, width]).domain(d3.extent(timeData, d => d[0]));
+    const y = d3.scaleLinear().range([height, 0]).domain([0, d3.max(timeData, d => d[1])]);
+
+    svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+    svg.append("g").call(d3.axisLeft(y).ticks(5, "$.2s"));
+
+    const line = d3.line().x(d => x(d[0])).y(d => y(d[1]));
+    svg.append("path").datum(timeData).attr("fill", "none").attr("stroke", "#e67e22").attr("stroke-width", 2).attr("d", line);
+}
+
+function drawGapChart(data) {
+    d3.select("#gapChart").selectAll("*").remove();
+    const locData = d3.rollups(data, v => {
+        const req = d3.sum(v, d => d.funding_required_usd);
+        const rec = d3.sum(v, d => d.funding_received_usd);
+        return req > 0 ? (1 - (rec / req)) * 100 : 0;
+    }, d => d.township).sort((a,b) => b[1] - a[1]).slice(0, 10);
+
+    const svg = d3.select("#gapChart").append("svg").attr("width", width + margin.left + margin.right).attr("height", height + margin.top + margin.bottom).append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    const x = d3.scaleBand().range([0, width]).domain(locData.map(d => d[0])).padding(0.1);
+    const y = d3.scaleLinear().range([height, 0]).domain([0, 100]);
+
+    svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x)).selectAll("text").attr("transform", "rotate(-45)").style("text-anchor", "end");
+    svg.append("g").call(d3.axisLeft(y));
+
+    svg.selectAll("rect").data(locData).enter().append("rect")
+        .attr("x", d => x(d[0])).attr("y", d => y(d[1])).attr("width", x.bandwidth()).attr("height", d => height - y(d[1])).attr("fill", "#e74c3c");
+}
+
+function drawSeverityChart(data) {
+    d3.select("#severityChart").selectAll("*").remove();
+    const sevData = d3.rollups(data, v => d3.sum(v, d => d.incidents_reported), d => d.severity).sort((a,b) => a[0] - b[0]);
+    const svg = d3.select("#severityChart").append("svg").attr("width", width + margin.left + margin.right).attr("height", height + margin.top + margin.bottom).append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    const x = d3.scaleBand().range([0, width]).domain(sevData.map(d => d[0])).padding(0.2);
+    const y = d3.scaleLinear().range([height, 0]).domain([0, d3.max(sevData, d => d[1])]);
+    svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+    svg.append("g").call(d3.axisLeft(y));
+    svg.selectAll("rect").data(sevData).enter().append("rect").attr("x", d => x(d[0])).attr("y", d => y(d[1])).attr("width", x.bandwidth()).attr("height", d => height - y(d[1])).attr("fill", "#9b59b6");
+}
+
+function updateTable(data) {
+    const tbody = d3.select("#dataTable tbody");
+    tbody.selectAll("tr").remove();
+    data.slice(0, 15).forEach(d => {
+        const row = tbody.append("tr");
+        row.append("td").text(d3.timeFormat("%Y-%m-%d")(d.date));
+        row.append("td").text(d.country);
+        row.append("td").text(d.sector);
+        row.append("td").text(d.partner);
+        row.append("td").text(d.gap_pct.toFixed(2) + "%");
+    });
+}
+</script>
+</body>
+</html>
